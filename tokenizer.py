@@ -4,18 +4,28 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 
-class testGPTDataset(Dataset):
+class GPTDataset(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride):
         self.input_ids = []
         self.target_ids = []
 
         token_ids = tokenizer.encode(txt)
+        assert len(token_ids) > max_length, "Number of tokenized inputs must at least be equal to max_length+1"
 
         for i in range(0, len(token_ids) - max_length, stride):
-            input_chunk = token_ids[i:i + max_length]
+            input_chunk = token_ids[i:i + max_length] 
             target_chunk = token_ids[i + 1:i + max_length + 1]
-            self.input_ids.append(torch.tensor(input_chunk, dtype=torch.long))
-            self.target_ids.append(torch.tensor(target_chunk, dtype=torch.long))
+            # `:` is a slice operator, here it takes a slice of the list and returns a new sublist from 
+            # i to i + max_length
+            # i + max_length is exclusive, so it will not include the token at that index
+            # e.g. if i = 0 and max_length = 4, input_chunk will be token_ids[0:4] which is the first 4 tokens
+            # if i = 1 and max_length = 4, input_chunk will be token_ids[1:5] which is the second to fifth tokens
+            # this is how we create the input chunk
+
+            self.input_ids.append(torch.tensor(input_chunk))
+            self.target_ids.append(torch.tensor(target_chunk))
+            # when we append the input and target chunks, we convert them to tensors of type long
+            # adding a new tensor as an entry in a list of training samples
 
     def __len__(self):
         return len(self.input_ids)
@@ -23,36 +33,57 @@ class testGPTDataset(Dataset):
     def __getitem__(self, idx):
         return self.input_ids[idx], self.target_ids[idx]
 
-class SelfAttention(nn.Module):
-    def __init__(self, d_in, d_out, qkv_bias=False):
+class CausalSelfAttention(nn.Module):
+    # B : batch size
+    # T : number of tokens in the sequence
+    # D_in : input dimension
+    # D_out : output dimension
+    # context_length : maximum number of tokens in the sequence
+    # qkv_bias : whether to use bias in the linear layers for query, key, and value
+    # dropout : dropout rate for attention weights
+    # mask : upper triangular mask to prevent attending to future tokens
+    def __init__(self, d_in, d_out, context_length, qkv_bias=False, dropout=0.0):
         super().__init__()
-        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias) 
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)  
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer('mask', torch.triu(torch.ones(context_length, context_length), diagonal=1))
 
     def forward(self, x):
-        queries = self.W_query(x)
-        keys = self.W_key(x)
-        values = self.W_value(x)
+        batch_size, number_of_tokens, d_in = x.shape # x.shape = (B, T, D_in)
+        queries = self.W_query(x) # shape: (B, T, D_out)
+        keys = self.W_key(x) # shape: (B, T, D_out)
+        values = self.W_value(x) # shape: (B, T, D_out)
 
-        attention_scores = torch.matmul(queries, keys.transpose(-1, -2))
+        attention_scores = queries @ keys.transpose(1, 2) # shape: (B, T, T)
+        attention_scores.masked_fill_(self.mask.bool()[:number_of_tokens, :number_of_tokens], float('-inf')) # _ ops are in-place operations
 
-        batch_size, seq_len, _ = attention_scores.size()
-        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device))
-        mask = causal_mask.masked_fill(causal_mask == 0, float('-inf')).masked_fill(causal_mask == 1, 0.0)
-        print(mask)
-        attention_scores = attention_scores + mask
+        attention_weights = torch.softmax(attention_scores / torch.sqrt(torch.tensor(keys.shape[-1])), dim=-1) # shape: (B, T, T)
+        attention_weights = self.dropout(attention_weights)
 
-        attention_weights = torch.softmax(attention_scores / torch.sqrt(torch.tensor(keys.shape[-1], dtype=torch.float32)), dim=-1)
-        print(attention_weights)
-        context_vector = attention_weights @ values
-
+        context_vector = attention_weights @ values # shape: (B, T, D_out)
         return context_vector
         
+class MultiHeadAttentionWrapper(nn.Module): # wrapper for multiple heads, can write as a single class with weight splits
+    def __init__(self, d_in, d_out, context_length, num_heads=1, qkv_bias=False, dropout=0.0):
+        super().__init__()
+        self.heads = nn.ModuleList(
+            [CausalSelfAttention(d_in, d_out, context_length, qkv_bias, dropout) 
+            for _ in range(num_heads)]
+        )
+        self.out_projection = nn.Linear(d_out*num_heads, d_out*num_heads)
 
-def test_create_dataloader(txt, batch_size=4, max_length=4, stride=128, shuffle=True, drop_last=True, num_workers=0):
+    def forward(self, x):
+        context_vector = torch.cat([head(x) for head in self.heads], dim=-1)
+        return self.out_projection(context_vector)  # shape: (B, T, D_out*num_heads)
+
+class MultiHeadAttention(nn.Module):
+    # meow
+
+def create_dataloader(txt, batch_size=4, max_length=4, stride=128, shuffle=True, drop_last=True, num_workers=0):
     tokenizer = tiktoken.get_encoding("gpt2")
-    dataset = testGPTDataset(txt, tokenizer, max_length=max_length, stride=stride)
+    dataset = GPTDataset(txt, tokenizer, max_length=max_length, stride=stride)
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -61,99 +92,50 @@ def test_create_dataloader(txt, batch_size=4, max_length=4, stride=128, shuffle=
         num_workers=num_workers
     )
     return dataloader
-# will use custom cuda kernel for optimizationnnnn laterrrr
 
 def main(): 
-    # text = "Hello, world . This is a TESTTTTT !!! lol"
-    # result = re.split(r'([,.]|\s)', text)
-    # result = [item for item in result if item.strip()]
-    # print(result)
+    with open("text.txt", "r", encoding="utf-8") as f:
+        raw_text = f.read()
 
     tokenizer = tiktoken.get_encoding("gpt2")
-    with open("text.txt", "r", encoding="utf-8") as file:
-        raw_text = file.read()
+    encoded_text = tokenizer.encode(raw_text)
 
-    # print(raw_text)
+    vocab_size = tokenizer.n_vocab  # gpt2 vocab size
+    output_dim = 256
+    max_len = 1024
+    context_length = max_len
 
-    enc_text = tokenizer.encode(raw_text, allowed_special={"<|endoftext|>"})
-    print(f"Text data length: {len(enc_text)}")
-    # enc_sample = enc_text[50:]
-    # # print(enc_sample)
 
-    # context_frame = 4
-    # x = enc_sample[:context_frame]
-    # y = enc_sample[:context_frame + 1]
-    # print(f"Looking: {x}")
-    # print(f"Predicting: {y}")
-
-    # for i in range(1,context_frame+1):
-    #     context = enc_sample[:i]
-    #     desired = enc_sample[i]
-    #     print(tokenizer.decode(context), "->", tokenizer.decode([desired]))
-    # with open("text.txt", "r", encoding="utf-8") as f:
-    #     raw_text = f.read()
+    token_embedding_layer = nn.Embedding(vocab_size, output_dim)
+    pos_embedding_layer = torch.nn.Embedding(context_length, output_dim)
 
     max_length = 4
-    dataloader = test_create_dataloader(raw_text, batch_size=8, max_length=max_length, stride=4, shuffle=False, drop_last=False, num_workers=0)
-    data_iter = iter(dataloader)
-    inputs, targets = next(data_iter)
-    print("INPUTS:\n", inputs)
-    print("\nTARGETS:\n", targets)
+    dataloader = create_dataloader(raw_text, batch_size=8, max_length=max_length, stride=max_length)
 
-    torch.manual_seed(123)
-    vocab_size = tokenizer.n_vocab # gpt2 vocab size
-    print(f"VOCAB SIZE: {vocab_size}")
-    output_dim = 256
-    token_embedding_layer = torch.nn.Embedding(vocab_size, output_dim)
-    token_embeddings = token_embedding_layer(inputs)
+    for batch in dataloader:
+        x, y = batch
 
-    # print(token_embeddings)
-    # abs embedded approach as in gpt2
-    context_length = max_length
-    pos_embedding_layer = torch.nn.Embedding(context_length, output_dim)
-    pos_embeddings = pos_embedding_layer(torch.arange(context_length))
-    input_embeddings = token_embeddings + pos_embeddings
-    # print(input_embeddings)
+        token_embeddings = token_embedding_layer(x)
+        pos_embeddings = pos_embedding_layer(torch.arange(max_length))
 
-    # query = inputs[1]
-    # attention_scores_2 = torch.empty(inputs.shape[0])
-    # for i, x_i in enumerate(inputs):
-    #     attention_scores_2[i] = torch.dot(x_i, query)
-    # attention_weights_2 = torch.softmax(attention_scores_2, dim=0)
-    # print(f"Normalized attention scores: {attention_weights_2}")
+        input_embeddings = token_embeddings + pos_embeddings
 
-    # context_vector_2 = torch.zeros(query.shape)
-    # for i, x_i in enumerate(inputs):
-    #     context_vector_2 += attention_weights_2 * x_i
-    # print(f"Context vector: {context_vector_2}")
+        break
 
-    # attention_scores = inputs @ inputs.T
-    # print(attention_scores)
-    # attention_weights = torch.softmax(attention_scores, dim=-1, dtype='utf-8')
-    # print(attention_weights)
+    print(f"Input embeddings shape: {input_embeddings.shape}")
 
-    # x_2 = input_embeddings[1]
-    # d_in = input_embeddings.shape[1]
-    # d_out = 2
+    attention_layer = MultiHeadAttentionWrapper(
+        d_in=output_dim,
+        d_out=output_dim,
+        context_length=max_length,
+        num_heads=4,
+        qkv_bias=True,
+        dropout=0.1
+    )
 
-    # W_query = torch.nn.Parameter(torch.rand(d_in, d_out))
-    # W_key = torch.nn.Parameter(torch.rand(d_in, d_out))
-    # W_value = torch.nn.Parameter(torch.rand(d_in, d_out))
-
-    # query_2 = x_2 @ W_query
-    # key_2 = x_2 @ W_key
-    # value_2 = x_2 @ W_value
-
-    # keys = inputs @ W_key
-    # values = inputs @ W_value
-    # print(f"key shape: {keys.shape}")
-    # print(f"value shape: {values.shape}")
-
-    print(input_embeddings.shape)
-    self_attention = SelfAttention(output_dim, output_dim)
-    print(self_attention(input_embeddings))
-
-    
+    attention_output = attention_layer(input_embeddings)
+    print(f"Attention output shape: {attention_output.shape}")
+    print(f"Attention output: {attention_output}")
 
     return
 
