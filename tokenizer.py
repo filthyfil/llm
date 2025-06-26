@@ -143,6 +143,7 @@ class MultiHeadAttention(nn.Module):
 
         context_vector = (attention_weights @ values).transpose(1, 2) 
         # shape: (B, T, T, H)
+        context_vector = context_vector.contiguous().view(batch_size, number_of_tokens, self.d_out)
         context_vector = self.out_proj(context_vector)
 
         return context_vector
