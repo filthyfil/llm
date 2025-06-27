@@ -4,6 +4,58 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 
+GPT_CONFIG_124M = {
+    "vocab_size": 50257,
+    "context_length": 1024,
+    "dim_embed": 768,
+    "n_heads": 12,
+    "n_layers": 12,
+    "drop_rate": 0.1,
+    "qkv_bias": False
+}
+
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_embed = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
+        self.pos_embed = nn.Embedding(cfg["context_length"], cfg["dim_embed"])  
+        self.drop_embed = nn.Dropout(cfg["drop_rate"])
+
+        self.trf_blocks = nn.Sequential(
+            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])]
+        )
+
+        self.final_norm = LayerNorm(cfg["dim_embed"])
+        self.out_head = nn.Linear(
+            cfg["dim_embed"], cfg["vocab_size"], bias=False
+        )
+
+    def forward(self, in_idx):
+        batch_size, seq_len = in_idx.shape
+        tok_embed = self.tok_embed(in_idx)
+        pos_embed = self.pos_embed(torch.arange(seq_len, device=in_idx.device))
+        
+        x = tok_embed + pos_embed
+        x = self.drop_embed(x)
+        x = self.trf_blocks(x)
+        x = self.final_norm(x)
+
+        logits = self.out_head(x)
+        return logits
+
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+    def forward(self, x):
+        return x
+    
+class LayerNorm(nn.Module):
+    def __init__(self, normalized_shape, eps):
+        super().__init__()
+    def forward(self, x):
+        return x
+
+
 class GPTDataset(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride):
         self.input_ids = []
@@ -80,7 +132,6 @@ class MultiHeadAttentionWrapper(nn.Module): # wrapper for multiple heads, can wr
 
 class MultiHeadAttention(nn.Module):
     """
-    research:
     torch.split(tensor, split_size, dim=0) : 
         - splits the tensor into chunks
         - https://docs.pytorch.org/docs/stable/generated/torch.split.html
@@ -88,8 +139,8 @@ class MultiHeadAttention(nn.Module):
         - chunks is int and could be the number of heads
         - avoids copying tensors, less memory overhead
         - https://docs.pytorch.org/docs/stable/generated/torch.chunk.html
-    
-    right now, chunk() seems like the better fit, but which is faster    
+    torch.view
+        - best option
     """
     def __init__(self, d_in, d_out, context_length, num_heads=1, qkv_bias=False, dropout=0.0):
         super().__init__()
