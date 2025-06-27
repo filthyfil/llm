@@ -177,7 +177,7 @@ def main():
     pos_embedding_layer = nn.Embedding(context_length, output_dim)
 
     max_length = 4
-    dataloader = create_dataloader(raw_text, batch_size=8, max_length=max_length, stride=max_length)
+    dataloader = create_dataloader(raw_text, batch_size=1, max_length=max_length, stride=max_length)
 
     for batch in dataloader:
         x, y = batch
@@ -191,13 +191,13 @@ def main():
 
     print(f"Input embeddings shape: {input_embeddings.shape}")
 
-    attention_layer = MultiHeadAttentionWrapper(
+    attention_layer = MultiHeadAttention(
         d_in=output_dim,
         d_out=output_dim,
         context_length=max_length,
         num_heads=4,
-        qkv_bias=True,
-        dropout=0.1
+        qkv_bias=False,
+        dropout=0.0
     )
 
     attention_output = attention_layer(input_embeddings)
