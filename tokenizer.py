@@ -1,8 +1,8 @@
 import tiktoken
-import re
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
+
 
 GPT_CONFIG_124M = {
     "vocab_size": 50257,
@@ -13,6 +13,7 @@ GPT_CONFIG_124M = {
     "drop_rate": 0.1,
     "qkv_bias": False
 }
+
 
 class GPTModel(nn.Module):
     def __init__(self, cfg):
@@ -43,17 +44,73 @@ class GPTModel(nn.Module):
         logits = self.out_head(x)
         return logits
 
+
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
+        self.attention = MultiHeadAttention(
+            d_in=cfg["dim_embed"],
+            d_out=cfg["dim_embed"],
+            context_length=cfg["context_length"],
+            num_heads=cfg["n_heads"],
+            qkv_bias=cfg["qkv_bias"],
+            dropout=cfg["drop_rate"]
+        )
+        self.feed_forward = FeedForward(cfg)
+        self.layer_norm1 = LayerNorm(cfg["dim_embed"])
+        self.layer_norm2 = LayerNorm(cfg["dim_embed"])
+        self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
+
     def forward(self, x):
+        shortcut = x # <residual connection
+        x = self.layer_norm1(x)
+        x = self.attention(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut  # residual connection/>
+
+        shortcut = x # <residual connection
+        x = self.layer_norm2(x)
+        x = self.feed_forward(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut  # residual connection/>
+
         return x
     
+
 class LayerNorm(nn.Module):
-    def __init__(self, normalized_shape, eps):
+    def __init__(self, embed_dim):
         super().__init__()
+        self.eps = 1e-5
+        self.scale = nn.Parameter(torch.ones(embed_dim))
+        self.shift = nn.Parameter(torch.zeros(embed_dim))
+
     def forward(self, x):
-        return x
+        mean = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        norm_x = (x - mean) / torch.sqrt(var + self.eps)
+        return self.scale * norm_x + self.shift
+
+
+class GELU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return 0.5 * x * (1.0 + torch.tanh(
+            torch.sqrt(torch.tensor(2.0 / torch.pi)) * 
+            (x + 0.044715 * torch.pow(x, 3))))
+    
+
+class FeedForward(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(cfg["dim_embed"], 4 * cfg["dim_embed"]),
+            GELU(),
+            nn.Linear(4 * cfg["dim_embed"], cfg["dim_embed"])
+        )
+    def forward(self, x):
+        return self.layers(x)
 
 
 class GPTDataset(Dataset):
@@ -84,6 +141,7 @@ class GPTDataset(Dataset):
     
     def __getitem__(self, idx):
         return self.input_ids[idx], self.target_ids[idx]
+
 
 class CausalSelfAttention(nn.Module):
     # B : batch size
@@ -116,7 +174,8 @@ class CausalSelfAttention(nn.Module):
 
         context_vector = attention_weights @ values # shape: (B, T, D_out)
         return context_vector
-        
+
+
 class MultiHeadAttentionWrapper(nn.Module): # wrapper for multiple heads, can write as a single class with weight splits
     def __init__(self, d_in, d_out, context_length, num_heads=1, qkv_bias=False, dropout=0.0):
         super().__init__()
@@ -130,9 +189,10 @@ class MultiHeadAttentionWrapper(nn.Module): # wrapper for multiple heads, can wr
         context_vector = torch.cat([head(x) for head in self.heads], dim=-1)
         return self.out_projection(context_vector)  # shape: (B, T, D_out*num_heads)
 
+
 class MultiHeadAttention(nn.Module):
     """
-    torch.split(tensor, split_size, dim=0) : 
+    torch.split(tensor, split_size, dim=0)  
         - splits the tensor into chunks
         - https://docs.pytorch.org/docs/stable/generated/torch.split.html
     torch.chunk(input, chunks, dim=0)
@@ -141,6 +201,10 @@ class MultiHeadAttention(nn.Module):
         - https://docs.pytorch.org/docs/stable/generated/torch.chunk.html
     torch.view
         - best option
+        - used to reshape tensors without changing their data. It allows 
+          you to specify a new shape for the tensor, as long as the total 
+          number of elements remains the same. 
+        - https://docs.pytorch.org/docs/stable/generated/torch.Tensor.view.html
     """
     def __init__(self, d_in, d_out, context_length, num_heads=1, qkv_bias=False, dropout=0.0):
         super().__init__()
@@ -199,6 +263,37 @@ class MultiHeadAttention(nn.Module):
 
         return context_vector
 
+
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_embed = nn.Embedding(cfg["vocab_size"], cfg["dim_embed"])
+        self.pos_embed = nn.Embedding(cfg["context_length"], cfg["dim_embed"])  
+        self.drop_embed = nn.Dropout(cfg["drop_rate"])
+
+        self.trf_blocks = nn.Sequential(
+            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])]
+        )
+
+        self.final_norm = LayerNorm(cfg["dim_embed"])
+        self.out_head = nn.Linear(
+            cfg["dim_embed"], cfg["vocab_size"], bias=False
+        )
+
+    def forward(self, in_idx):
+        batch_size, seq_len = in_idx.shape
+        tok_embed = self.tok_embed(in_idx)
+        pos_embed = self.pos_embed(torch.arange(seq_len, device=in_idx.device))
+        
+        x = tok_embed + pos_embed
+        x = self.drop_embed(x)
+        x = self.trf_blocks(x)
+        x = self.final_norm(x)
+
+        logits = self.out_head(x)
+        return logits
+
+
 def create_dataloader(txt, batch_size=4, max_length=4, stride=128, shuffle=True, drop_last=True, num_workers=0):
     tokenizer = tiktoken.get_encoding("gpt2")
     dataset = GPTDataset(txt, tokenizer, max_length=max_length, stride=stride)
@@ -211,6 +306,19 @@ def create_dataloader(txt, batch_size=4, max_length=4, stride=128, shuffle=True,
     )
     return dataloader
 
+
+def generate_text(model, idx, max_new_tokens, context_length):
+    for _ in range(max_new_tokens):
+        idx_conditioned = idx[:, -context_length:] 
+        with torch.no_grad():
+            logits = model(idx_conditioned)
+        logits = logits[:, -1, :] # get the last token's logits
+        probabilities = torch.softmax(logits, dim=-1)
+        idx_next = torch.multinomial(probabilities, num_samples=1) # sample from the distribution
+        idx = torch.cat((idx, idx_next), dim=1) # append the new token to the input sequence
+    return idx
+
+
 def main(): 
     with open("text.txt", "r", encoding="utf-8") as f:
         raw_text = f.read()
@@ -218,44 +326,24 @@ def main():
     tokenizer = tiktoken.get_encoding("gpt2")
     encoded_text = tokenizer.encode(raw_text)
 
-    vocab_size = tokenizer.n_vocab  # gpt2 vocab size
-    output_dim = 256
-    max_len = 1024
-    context_length = max_len
+    encoded_tensor = torch.tensor(encoded_text).unsqueeze(0)
 
+    torch.manual_seed(123)
+    model = GPTModel(GPT_CONFIG_124M)
+    model.eval()
 
-    token_embedding_layer = nn.Embedding(vocab_size, output_dim)
-    pos_embedding_layer = nn.Embedding(context_length, output_dim)
-
-    max_length = 4
-    dataloader = create_dataloader(raw_text, batch_size=1, max_length=max_length, stride=max_length)
-
-    for batch in dataloader:
-        x, y = batch
-
-        token_embeddings = token_embedding_layer(x)
-        pos_embeddings = pos_embedding_layer(torch.arange(max_length))
-
-        input_embeddings = token_embeddings + pos_embeddings
-
-        break
-
-    print(f"Input embeddings shape: {input_embeddings.shape}")
-
-    attention_layer = MultiHeadAttention(
-        d_in=output_dim,
-        d_out=output_dim,
-        context_length=max_length,
-        num_heads=4,
-        qkv_bias=False,
-        dropout=0.0
+    out = generate_text(
+        model=model,
+        idx=encoded_tensor, 
+        max_new_tokens=100, 
+        context_length=GPT_CONFIG_124M["context_length"]
     )
 
-    attention_output = attention_layer(input_embeddings)
-    print(f"Attention output shape: {attention_output.shape}")
-    print(f"Attention output: {attention_output}")
+    decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+    print(decoded_text)
 
     return
+
 
 if __name__ == '__main__':
     main()
