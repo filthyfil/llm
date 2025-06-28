@@ -37,6 +37,7 @@ gpt_project/
 ## 🧪 Quickstart
 
 1. **Install dependencies**  
+Just pytorch and tiktoken; for my specific versions:
 ```bash
 pip install -r requirements.txt
 ```
