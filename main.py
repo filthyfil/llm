@@ -5,7 +5,7 @@ from model.model import GPTModel
 from utils.generate import generate_text
 
 def main():
-    with open("text.txt", "r", encoding="utf-8") as f:
+    with open("assets/text.txt", "r", encoding="utf-8") as f:
         raw_text = f.read()
 
     tokenizer = tiktoken.get_encoding("gpt2")
