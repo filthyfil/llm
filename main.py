@@ -2,7 +2,7 @@ import torch
 import tiktoken
 from config import GPT_CONFIG_124M
 from model.model import GPTModel
-from utils.generate import generate_text, generate_text_with_cache
+from utils.generate import generate_text_with_cache
 
 def main():
     with open("assets/text.txt", "r", encoding="utf-8") as f:
