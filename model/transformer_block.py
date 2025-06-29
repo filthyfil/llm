@@ -27,10 +27,11 @@ class TransformerBlock(nn.Module):
         self.layer_norm2 = LayerNorm(cfg["dim_embed"])
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x):
+    def forward(self, x, use_cache=False):
         shortcut = x # <residual connection
         x = self.layer_norm1(x)
-        x = self.attention(x)
+        # x = self.attention(x)
+        x = self.attention(x, use_cache=use_cache)
         x = self.drop_shortcut(x)
         x = x + shortcut  # residual connection/>
 

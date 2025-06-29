@@ -2,7 +2,7 @@ import torch
 import tiktoken
 from config import GPT_CONFIG_124M
 from model.model import GPTModel
-from utils.generate import generate_text
+from utils.generate import generate_text, generate_text_with_cache
 
 def main():
     with open("assets/text.txt", "r", encoding="utf-8") as f:
@@ -14,12 +14,14 @@ def main():
 
     torch.manual_seed(42)
     model = GPTModel(GPT_CONFIG_124M)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     model.eval()
 
-    output = generate_text(
+    output = generate_text_with_cache(
         model=model,
         idx=input_tensor,
-        max_new_tokens=10,
+        max_new_tokens=50,
         context_length=GPT_CONFIG_124M["context_length"]
     )
 

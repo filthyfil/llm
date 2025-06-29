@@ -54,7 +54,7 @@ class MultiHeadAttentionWrapper(nn.Module):
 
 # MultiHeadAttention is a stand-alone multi-head attention mechanism. 
 # It splits the input into multiple heads, applies self-attention to each head.
-class MultiHeadAttention(nn.Module):
+class MultiHeadAttentionWithCaching(nn.Module):
     """
     torch.split(tensor, split_size, dim=0)  
         - splits the tensor into chunks
@@ -83,14 +83,41 @@ class MultiHeadAttention(nn.Module):
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out)
         self.dropout = nn.Dropout(dropout)
-        self.register_buffer('mask', torch.triu(torch.ones(context_length, context_length), diagonal=1))
+        self.register_buffer('mask', torch.triu(torch.ones(context_length, context_length), diagonal=1)) 
+        # upper triangular mask to prevent attending to future tokens
+        # mask.shape = (context_length, context_length)
+        self.register_buffer("cache_k", None, persistent=False) # kv cache
+        self.register_buffer("cache_v", None, persistent=False) # kv cache
+        # cache_k and cache_v are used to store the keys and values for the attention mechanism
+        # this is useful for inference, where we want to cache the keys and values
+        # to avoid recomputing them for each token in the sequence
 
-    def forward(self, x):
+    def reset_cache(self):
+        # reset the cache for keys and values
+        self.cache_k = None
+        self.cache_v = None
+        self.current_kv_position = 0
+
+    def forward(self, x, use_cache=False):
         batch_size, number_of_tokens, d_in = x.shape # x.shape = (B, T, D_in)
-        queries = self.W_query(x) # shape: (B, T, D_out)
-        keys = self.W_key(x) # shap context_vector = (attention_weights @ values).transpose(1, 2) 
-        # shape: e: (B, T, D_out)
-        values = self.W_value(x) # shape: (B, T, D_out)
+        # queries = self.W_query(x) # shape: (B, T, D_out)
+        # keys = self.W_key(x) # shape (B, T, D_out)
+        # values = self.W_value(x) # shape: (B, T, D_out)
+
+        # kv cache implementation
+        keys_new = self.W_key(x)
+        values_new = self.W_value(x)
+        queries = self.W_query(x)
+
+        if use_cache:
+            if self.cache_k is None:
+                self.cache_k, self.cache_v = keys_new, values_new
+            else:
+                self.cache_k = torch.cat([self.cache_k, keys_new], dim=1)
+                self.cache_v = torch.cat([self.cache_v, values_new], dim=1)
+            keys, values = self.cache_k, self.cache_v
+        else:
+            keys, values = keys_new, values_new
 
         # partition the qk tensors for each head (mh)
         # mh_queries = torch.chunk(queries, num_heads, dim=-1)
@@ -114,15 +141,33 @@ class MultiHeadAttention(nn.Module):
         # keys = keys.transpose(1, 2) # shape : (B, H, T, D_head)
         # values = values.transpose(1, 2) # shape : (B, H, T, D_head)
 
-        attention_scores = queries @ keys.transpose(2, 3)
-        mask = self.mask.bool()[:number_of_tokens, :number_of_tokens]
-        attention_scores.masked_fill_(mask, -torch.inf)
-        attention_weights = torch.softmax(attention_scores / torch.sqrt(torch.tensor(keys.shape[-1])), dim=-1) # shape: (B, T, T)
+        # mask = self.mask.bool()[:number_of_tokens, :number_of_tokens]
+        num_tokens_Q = queries.shape[-2]
+        num_tokens_K = keys.shape[-2]
+        # In KV caching, the number of tokens becomes ambiguous
+        # because the query comes from only the new input tokens,
+        # while the keys and values may include all previously cached tokens.
+        # So we must separately track:
+        #   - the number of query tokens (new tokens just fed in)
+        #   - the number of key/value tokens (all tokens seen so far, due to caching)
+        # If caching is enabled, we also need to use a pointer (e.g. self.ptr_current_pos)
+        # to extract the correct portion of the attention mask for this step.
+        if use_cache:
+            mask_bool = self.mask.bool()[
+                self.ptr_current_pos:self.ptr_current_pos + num_tokens_Q, :num_tokens_K
+            ]
+            self.ptr_current_pos += num_tokens_Q
+        else:
+            mask_bool = self.mask.bool()[:num_tokens_Q, :num_tokens_K]
+
+        # Now, the attention mechanism can be computed
+        attention_scores = queries @ keys.transpose(2, 3) # shape: (B, H, T, T)
+        attention_scores.masked_fill_(mask_bool, -torch.inf)
+        attention_weights = torch.softmax(attention_scores / torch.sqrt(torch.tensor(keys.shape[-1])), dim=-1) # shape: (B, H, T, T)
         attention_weights = self.dropout(attention_weights)
 
-        context_vector = (attention_weights @ values).transpose(1, 2) 
-        # shape: (B, T, T, H)
-        context_vector = context_vector.contiguous().view(batch_size, number_of_tokens, self.d_out)
+        context_vector = (attention_weights @ values).transpose(1, 2) # shape: (B, H, T, D_head) -> (B, T, H, D_head)
+        context_vector = context_vector.contiguous().view(batch_size, number_of_tokens, self.d_out) # shape: (B, T, D_out)
         context_vector = self.out_proj(context_vector)
 
         return context_vector
