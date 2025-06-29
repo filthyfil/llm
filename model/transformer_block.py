@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from model.attention import MultiHeadAttention
+from model.attention import MultiHeadAttentionWithCaching
 from model.activations import GELU
 
 # TransformerBlock is a single block of the transformer architecture
@@ -14,7 +14,7 @@ from model.activations import GELU
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.attention = MultiHeadAttention(
+        self.attention = MultiHeadAttentionWithCaching(
             d_in=cfg["dim_embed"],
             d_out=cfg["dim_embed"],
             context_length=cfg["context_length"],

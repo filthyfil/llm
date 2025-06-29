@@ -21,8 +21,9 @@ def main():
     output = generate_text_with_cache(
         model=model,
         idx=input_tensor,
-        max_new_tokens=50,
-        context_length=GPT_CONFIG_124M["context_length"]
+        max_new_tokens=10,
+        context_length=GPT_CONFIG_124M["context_length"],
+        temperature=1 # =0 is effective argmax
     )
 
     decoded = tokenizer.decode(output.squeeze(0).tolist())

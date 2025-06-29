@@ -24,21 +24,23 @@ def generate_text(model, idx, max_new_tokens, context_length):
 # appends the predicted token to the input sequence, and repeats this process
 # until the desired number of new tokens is generated.
 # It also supports caching of key-value pairs for faster generation.
-def generate_text_with_cache(model, idx, max_new_tokens, context_length=None, use_cache=True):
+def generate_text_with_cache(model, idx, max_new_tokens, context_length=None, use_cache=True, temperature=1.0):
     model.eval()  
-    context_len = context_length or model.pos_emb.num_embeddings
+    context_len = context_length or model.pos_embed.num_embeddings
     with torch.no_grad():
         if use_cache:
             model.reset_kv_cache()
             logits = model(idx[:, -context_len:], use_cache=True)
             for _ in range(max_new_tokens):
-                idx_next = logits[:, -1].argmax(dim=-1, keepdim=True) 
-                idx = torch.cat((idx, idx_next), dim=1) 
+                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+                idx = torch.cat((idx, idx_next), dim=1)
         else:
-            for _ in range(max_new_tokens):
+            for _ in range(max_new_tokens): 
+                idx = torch.cat((idx, idx_next), dim=1) 
                 logits = model(idx[:, -context_len:], use_cache=False)
-                idx_next = logits[:, -1].argmax(dim=-1, keepdim=True) 
+                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
                 idx = torch.cat((idx, idx_next), dim=1)
     return idx
 
-# CODE HERE

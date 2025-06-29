@@ -165,6 +165,7 @@ class MultiHeadAttentionWithCaching(nn.Module):
         # mask.shape = (context_length, context_length)
         self.register_buffer("cache_k", None, persistent=False) # kv cache
         self.register_buffer("cache_v", None, persistent=False) # kv cache
+        self.ptr_current_pos = 0
         # cache_k and cache_v are used to store the keys and values for the attention mechanism
         # this is useful for inference, where we want to cache the keys and values
         # to avoid recomputing them for each token in the sequence
@@ -173,7 +174,7 @@ class MultiHeadAttentionWithCaching(nn.Module):
         # reset the cache for keys and values
         self.cache_k = None
         self.cache_v = None
-        self.current_kv_position = 0
+        self.ptr_current_pos = 0
 
     def forward(self, x, use_cache=False):
         batch_size, number_of_tokens, d_in = x.shape # x.shape = (B, T, D_in)
@@ -240,9 +241,9 @@ class MultiHeadAttentionWithCaching(nn.Module):
         # Now, the attention mechanism can be computed
         attention_scores = queries @ keys.transpose(2, 3) # shape: (B, H, T, T)
         attention_scores.masked_fill_(mask_bool, -torch.inf)
-        attention_weights = torch.softmax(attention_scores / torch.sqrt(torch.tensor(keys.shape[-1])), dim=-1) # shape: (B, H, T, T)
+        attention_weights = torch.softmax(attention_scores / (keys.shape[-1] ** 0.5), dim=-1) # shape: (B, H, T, T)
         attention_weights = self.dropout(attention_weights)
-
+        
         context_vector = (attention_weights @ values).transpose(1, 2) # shape: (B, H, T, D_head) -> (B, T, H, D_head)
         context_vector = context_vector.contiguous().view(batch_size, number_of_tokens, self.d_out) # shape: (B, T, D_out)
         context_vector = self.out_proj(context_vector)

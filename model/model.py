@@ -40,7 +40,7 @@ class GPTModel(nn.Module):
             self.current_pos += seq_len
         else:
             pos_ids = torch.arange(0, seq_len, device=in_idx.device, dtype=torch.long)
-        pos_embed = self.pos_emb(pos_ids).unsqueeze(0)
+        pos_embed = self.pos_embed(pos_ids).unsqueeze(0)
         x = tok_embed + pos_embed
         x = self.drop_embed(x)
         # x = self.trf_blocks(x)
