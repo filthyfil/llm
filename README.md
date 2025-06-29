@@ -18,19 +18,22 @@ Shout out to Sebastian Raschka for his work in writing "Build a Large Language M
 
 ```
 gpt_project/
-├── main.py                # Entry point for text generation
-├── config.py              # Model configuration dictionary
+├── assets/
+│   ├── metamorphosis.txt  # Cool book
+│   └── text.txt           # Text generation function
+├── data/
+│   ├── dataset.py         # GPTDataset (tokenization + chunking)
+│   └── loader.py          # DataLoader 
 ├── model/
 │   ├── gpt_model.py       # GPTModel class
 │   ├── transformer_block.py  # TransformerBlock, LayerNorm, FeedForward
 │   ├── attention.py       # MultiHeadAttention, CausalSelfAttention
 │   └── activations.py     # GELU activation
-├── data/
-│   ├── dataset.py         # GPTDataset (tokenization + chunking)
-│   └── loader.py          # DataLoader factory
 ├── utils/
 │   └── generate.py        # Text generation function
-├── text.txt               # Input prompt for generation
+├── README.md              # You are here!
+├── config.py              # Model configuration dictionary
+├── main.py                # Entry point for text generation
 └── requirements.txt       # Dependencies
 ```
 
@@ -73,10 +76,10 @@ GPT_CONFIG_124M = {
 ## 📚 Future Additions
 
 - [ ] Training loop (AdamW, LR warmup, etc.)
-- [ ] KV cache for faster inference
+- [x] KV cache for faster inference
 - [ ] Weight initialization strategies
 - [ ] Model checkpointing and logging
-- [ ] Positional encoding visualization
+- [ ] CoT
 
 ---
 
