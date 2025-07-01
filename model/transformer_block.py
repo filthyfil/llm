@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from model.attention import MultiHeadAttentionWithCaching
+from model.attention import MultiHeadAttentionWithCaching, MultiHeadAttention
 from model.activations import GELU
 
 # TransformerBlock is a single block of the transformer architecture
@@ -14,7 +14,7 @@ from model.activations import GELU
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.attention = MultiHeadAttentionWithCaching(
+        self.att = MultiHeadAttention(
             d_in=cfg["dim_embed"],
             d_out=cfg["dim_embed"],
             context_length=cfg["context_length"],
@@ -22,22 +22,22 @@ class TransformerBlock(nn.Module):
             qkv_bias=cfg["qkv_bias"],
             dropout=cfg["drop_rate"]
         )
-        self.feed_forward = FeedForward(cfg)
-        self.layer_norm1 = LayerNorm(cfg["dim_embed"])
-        self.layer_norm2 = LayerNorm(cfg["dim_embed"])
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["dim_embed"])
+        self.norm2 = LayerNorm(cfg["dim_embed"])
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x, use_cache=False):
+    def forward(self, x):
         shortcut = x # <residual connection
-        x = self.layer_norm1(x)
+        x = self.norm1(x)
         # x = self.attention(x)
-        x = self.attention(x, use_cache=use_cache)
+        x = self.att(x)
         x = self.drop_shortcut(x)
         x = x + shortcut  # residual connection/>
 
         shortcut = x # <residual connection
-        x = self.layer_norm2(x)
-        x = self.feed_forward(x)
+        x = self.norm2(x)
+        x = self.ff(x)
         x = self.drop_shortcut(x)
         x = x + shortcut  # residual connection/>
 

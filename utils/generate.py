@@ -1,46 +1,48 @@
 import torch
 
+
 # generate_text is a function to generate text using the GPT model.
 # It takes the model, input indices, maximum number of new tokens to generate,
 # and the context length as parameters.
 # It uses the model to predict the next token based on the input indices,
 # appends the predicted token to the input sequence, and repeats this process
 # until the desired number of new tokens is generated.
-def generate_text(model, idx, max_new_tokens, context_length):
-    for _ in range(max_new_tokens):
-        idx_conditioned = idx[:, -context_length:] 
-        with torch.no_grad():
-            logits = model(idx_conditioned)
-        logits = logits[:, -1, :] # get the last token's logits
-        probabilities = torch.softmax(logits, dim=-1)
-        idx_next = torch.multinomial(probabilities, num_samples=1) # sample from the distribution
-        idx = torch.cat((idx, idx_next), dim=1) # append the new token to the input sequence
-    return idx
-
-# generate_text_cached is a function to generate text using the GPT model.
-# It takes the model, input indices, maximum number of new tokens to generate,
-# and the context length as parameters.
-# It uses the model to predict the next token based on the input indices,
-# appends the predicted token to the input sequence, and repeats this process
-# until the desired number of new tokens is generated.
 # It also supports caching of key-value pairs for faster generation.
-def generate_text_with_cache(model, idx, max_new_tokens, context_length=None, use_cache=True, temperature=1.0):
-    model.eval()  
-    context_len = context_length or model.pos_embed.num_embeddings
-    with torch.no_grad():
-        if use_cache:
-            model.reset_kv_cache()
-            logits = model(idx[:, -context_len:], use_cache=True)
-            for _ in range(max_new_tokens):
-                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
-                idx_next = torch.multinomial(probs, num_samples=1)
-                idx = torch.cat((idx, idx_next), dim=1)
+def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=None, eos_id=None, use_cache=False):
+
+    # For-loop is the same as before: Get logits, and only focus on last time step
+    for _ in range(max_new_tokens):
+        idx_cond = idx[:, -context_size:]
+        with torch.no_grad():
+            logits = model(idx_cond)
+        logits = logits[:, -1, :]
+
+        # New: Filter logits with top_k sampling
+        if top_k is not None:
+            # Keep only top_k values
+            top_logits, _ = torch.topk(logits, top_k)
+            min_val = top_logits[:, -1]
+            logits = torch.where(logits < min_val, torch.tensor(float("-inf")).to(logits.device), logits)
+
+        # New: Apply temperature scaling
+        if temperature > 0.0:
+            logits = logits / temperature
+
+            # Apply softmax to get probabilities
+            probs = torch.softmax(logits, dim=-1)  # (batch_size, context_len)
+
+            # Sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
+
+        # Otherwise same as before: get idx of the vocab entry with the highest logits value
         else:
-            for _ in range(max_new_tokens): 
-                idx = torch.cat((idx, idx_next), dim=1) 
-                logits = model(idx[:, -context_len:], use_cache=False)
-                probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
-                idx_next = torch.multinomial(probs, num_samples=1)
-                idx = torch.cat((idx, idx_next), dim=1)
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch_size, 1)
+
+        if idx_next == eos_id:  # Stop generating early if end-of-sequence token is encountered and eos_id is specified
+            break
+
+        # Same as before: append sampled index to the running sequence
+        idx = torch.cat((idx, idx_next), dim=1)  # (batch_size, num_tokens+1)
+
     return idx
 

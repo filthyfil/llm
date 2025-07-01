@@ -1,2 +1,6 @@
 /torch
 llm/
+gpt2/
+small-gpt2.pth
+__pycache__/
+*.pyc
