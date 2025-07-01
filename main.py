@@ -3,6 +3,7 @@ import tiktoken
 from config import GPT_CONFIG_124M
 from model.model import GPTModel
 from utils.generate import generate
+# from utils.gpt_download import download_and_load_gpt2
 # from utils.load_weights import assign, load_weights_into_gpt
 
 
@@ -24,14 +25,19 @@ def main():
     }
 
     # Copy the base config (small) and update to specific model settings
-    model_name = "gpt2-small (124M)"  
+    model_name = input(f"Model? (ex: gpt2-small (124M)): ").strip()
+    model_path = model_name.replace(" ", "_") + ".pth"
+    print(f"Selected model: {model_name}")
     NEW_CONFIG = GPT_CONFIG_124M.copy()
     NEW_CONFIG.update(model_configs[model_name])
     NEW_CONFIG.update({"context_length": 1024, "qkv_bias": True})
 
     model = GPTModel(NEW_CONFIG)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.load_state_dict(torch.load("small-gpt2.pth", map_location=device, weights_only=True))
+    print(f"Using device: {device}")
+    print(f"Model configuration: {NEW_CONFIG}")
+    model
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.to(device)
     input_tensor = input_tensor.to(device)
 
@@ -49,6 +55,8 @@ def main():
 
     decoded = tokenizer.decode(output.squeeze(0).tolist())
     print(decoded)
+    print("Generation complete.")
+    print("On gpt2-small (124M) it should read: \"The meaning of life is the end. This is not the end of us — you're never alone\"")
     # torch.save(model.state_dict(), "small-gpt2.pth")
 
 

@@ -24,41 +24,55 @@ gpt_project/
 ├── data/
 │   ├── dataset.py         # GPTDataset (tokenization + chunking)
 │   └── loader.py          # DataLoader 
+├── gpt2/                  # Saves raw model parameters and settings 
 ├── model/
 │   ├── gpt_model.py       # GPTModel class
 │   ├── transformer_block.py  # TransformerBlock, LayerNorm, FeedForward
 │   ├── attention.py       # MultiHeadAttention, CausalSelfAttention
 │   └── activations.py     # GELU activation
 ├── utils/
-│   └── generate.py        # Text generation function
+│   ├── generate.py        # Text generation function
+│   ├── gpt_download.py    # Set up function, grabs weights online
+│   └── load_weights.py    # Loads weights into the model
 ├── README.md              # You are here!
 ├── config.py              # Model configuration dictionary
 ├── main.py                # Entry point for text generation
-└── requirements.txt       # Dependencies
+├── requirements.txt       # Dependencies
+└── setup.py               # Setup script 
 ```
 
 ## 🧪 Quickstart
 
 1. **Install dependencies**  
-Just pytorch and tiktoken; to install my specific versions:
+Run this command (in a virtual environment):
 ```bash
 pip install -r requirements.txt
 ```
 
-2. **Add your prompt** to `text.txt`
+2. **Install the model**
+For testing, install the gpt-small (124M) model.
+```bash
+python setup.py
+```
 
 3. **Run the model**
+On the gpt2-small (124M) model the output should read: "The meaning of life is the end. This is not the end of us — 
+you're never alone" on the input "The meaning of life is".
 ```bash
 python main.py
 ```
+4. **Change the prompt**
+You can change the prompt in assets/text.txt
 
 The model will read `text.txt`, tokenize it, and generate text token-by-token using causal self-attention.
+On the gpt2-small (124M) model it should read: "The meaning of life is the end. This is not the end of us — 
+you're never alone" on input "The meaning of life is".
 
 ---
 
 ## ⚙️ Configuration
 
-Edit `config.py` to modify model hyperparameters:
+Edit `config.py` to modify model hyperparameters (Only do this if you know what you are doing!):
 ```python
 GPT_CONFIG_124M = {
     "vocab_size": 50257,

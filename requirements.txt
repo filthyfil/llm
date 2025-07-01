@@ -1,2 +1,5 @@
-torch==2.7.1+cu126
-tiktoken==0.9.0
+torch
+tiktoken
+tabulate
+tqdm
+tensorflow
