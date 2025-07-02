@@ -46,3 +46,34 @@ def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=No
 
     return idx
 
+def chat(
+    model,
+    idx,
+    max_new_tokens,
+    context_size,
+    top_k=None,
+    temperature=1.0,
+    use_cache=False,
+    end_token_id=50256,  # default for GPT-2
+):
+    model.eval()
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -context_size:]
+            logits = model(idx_cond)
+            logits = logits[:, -1, :] / temperature
+
+            if top_k:
+                top_k_values, _ = torch.topk(logits, top_k)
+                logits[logits < top_k_values[:, [-1]]] = -float('Inf')
+
+            probs = torch.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            # Stop generation if end-of-text token is generated
+            if idx_next.item() == end_token_id:
+                break
+
+            idx = torch.cat((idx, idx_next), dim=1)
+
+    return idx
