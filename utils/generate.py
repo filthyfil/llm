@@ -8,43 +8,61 @@ import torch
 # appends the predicted token to the input sequence, and repeats this process
 # until the desired number of new tokens is generated.
 # It also supports caching of key-value pairs for faster generation.
-def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=None, eos_id=None, use_cache=False):
+def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=None, eos_id=50256, use_cache=False):
+    model.eval()
+    with torch.no_grad():
+        if not use_cache:
+            for _ in range(max_new_tokens):
+                idx_cond = idx[:, -context_size:]
+                logits = model(idx_cond)
+                logits = logits[:, -1, :]
 
-    # For-loop is the same as before: Get logits, and only focus on last time step
-    for _ in range(max_new_tokens):
-        idx_cond = idx[:, -context_size:]
-        with torch.no_grad():
-            logits = model(idx_cond)
-        logits = logits[:, -1, :]
+                if top_k is not None:
+                    top_logits, _ = torch.topk(logits, top_k)
+                    min_val = top_logits[:, -1].unsqueeze(1)
+                    logits = torch.where(logits < min_val, float("-inf"), logits)
 
-        # New: Filter logits with top_k sampling
-        if top_k is not None:
-            # Keep only top_k values
-            top_logits, _ = torch.topk(logits, top_k)
-            min_val = top_logits[:, -1]
-            logits = torch.where(logits < min_val, torch.tensor(float("-inf")).to(logits.device), logits)
+                if temperature > 0.0:
+                    probs = torch.softmax(logits / temperature, dim=-1)
+                    idx_next = torch.multinomial(probs, num_samples=1)
+                else:
+                    idx_next = torch.argmax(logits, dim=-1, keepdim=True)
 
-        # New: Apply temperature scaling
-        if temperature > 0.0:
-            logits = logits / temperature
+                if eos_id is not None and (idx_next == eos_id).all():
+                    break
 
-            # Apply softmax to get probabilities
-            probs = torch.softmax(logits, dim=-1)  # (batch_size, context_len)
-
-            # Sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
-
-        # Otherwise same as before: get idx of the vocab entry with the highest logits value
+                idx = torch.cat((idx, idx_next), dim=1)
         else:
-            idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch_size, 1)
+            # ⚠️ RESET CACHE FIRST
+            model.reset_kv_cache()
+            model.current_pos = 0
 
-        if idx_next == eos_id:  # Stop generating early if end-of-sequence token is encountered and eos_id is specified
-            break
+            # Initialize cache by processing full prompt once
+            logits = model(idx, use_cache=True)
 
-        # Same as before: append sampled index to the running sequence
-        idx = torch.cat((idx, idx_next), dim=1)  # (batch_size, num_tokens+1)
+            for _ in range(max_new_tokens):
+                logits = logits[:, -1, :]
+                if top_k is not None:
+                    top_logits, _ = torch.topk(logits, top_k)
+                    min_val = top_logits[:, -1].unsqueeze(1)
+                    logits = torch.where(logits < min_val, float("-inf"), logits)
+
+                if temperature > 0.0:
+                    probs = torch.softmax(logits / temperature, dim=-1)
+                    next_idx = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_idx = torch.argmax(logits, dim=-1, keepdim=True)
+
+                if eos_id is not None and (next_idx == eos_id).all():
+                    break
+
+                idx = torch.cat((idx, next_idx), dim=1)
+
+                # ✅ THIS IS KEY: feed only next token, but KV cache holds history
+                logits = model(next_idx, use_cache=True)
 
     return idx
+
 
 def chat(
     model,
@@ -53,7 +71,6 @@ def chat(
     context_size,
     top_k=None,
     temperature=1.0,
-    use_cache=False,
     end_token_id=50256,  # default for GPT-2
 ):
     model.eval()

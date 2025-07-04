@@ -14,24 +14,23 @@ from model.activations import GELU
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.att = MultiHeadAttention(
+        self.att = MultiHeadAttentionWithCaching(
             d_in=cfg["dim_embed"],
             d_out=cfg["dim_embed"],
             context_length=cfg["context_length"],
             num_heads=cfg["n_heads"],
             qkv_bias=cfg["qkv_bias"],
-            dropout=cfg["drop_rate"]
-        )
+            dropout=cfg["drop_rate"],
+            )
         self.ff = FeedForward(cfg)
         self.norm1 = LayerNorm(cfg["dim_embed"])
         self.norm2 = LayerNorm(cfg["dim_embed"])
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x):
+    def forward(self, x, use_cache=False):
         shortcut = x # <residual connection
         x = self.norm1(x)
-        # x = self.attention(x)
-        x = self.att(x)
+        x = self.att(x, use_cache=use_cache)
         x = self.drop_shortcut(x)
         x = x + shortcut  # residual connection/>
 
@@ -42,7 +41,7 @@ class TransformerBlock(nn.Module):
         x = x + shortcut  # residual connection/>
 
         return x
-    
+
 
 # Layer normalization is a technique to normalize the inputs across the features
 # It helps stabilize the learning process and can lead to faster convergence.

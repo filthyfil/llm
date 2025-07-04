@@ -147,7 +147,7 @@ class MultiHeadAttentionWithCaching(nn.Module):
           number of elements remains the same. 
         - https://docs.pytorch.org/docs/stable/generated/torch.Tensor.view.html
     """
-    def __init__(self, d_in, d_out, context_length, num_heads=1, qkv_bias=False, dropout=0.0):
+    def __init__(self, d_in, d_out, context_length, num_heads=1, qkv_bias=False, dropout=0.0, max_seq_len=None, window_size=None):
         super().__init__()
         assert (d_out % num_heads == 0) 
 
@@ -163,6 +163,8 @@ class MultiHeadAttentionWithCaching(nn.Module):
         self.register_buffer('mask', torch.triu(torch.ones(context_length, context_length), diagonal=1)) 
         # upper triangular mask to prevent attending to future tokens
         # mask.shape = (context_length, context_length)
+        self.max_seq_len = max_seq_len or context_length
+        self.window_size = window_size or self.max_seq_len
         self.register_buffer("cache_k", None, persistent=False) # kv cache
         self.register_buffer("cache_v", None, persistent=False) # kv cache
         self.ptr_current_pos = 0
@@ -187,15 +189,8 @@ class MultiHeadAttentionWithCaching(nn.Module):
         values_new = self.W_value(x)
         queries = self.W_query(x)
 
-        if use_cache:
-            if self.cache_k is None:
-                self.cache_k, self.cache_v = keys_new, values_new
-            else:
-                self.cache_k = torch.cat([self.cache_k, keys_new], dim=1)
-                self.cache_v = torch.cat([self.cache_v, values_new], dim=1)
-            keys, values = self.cache_k, self.cache_v
-        else:
-            keys, values = keys_new, values_new
+        # We implicitly split the matrix by adding a `num_heads` dimension
+        # Unroll last dim: (b, num_tokens, d_out) -> (b, num_tokens, num_heads, head_dim)
 
         # partition the qk tensors for each head (mh)
         # mh_queries = torch.chunk(queries, num_heads, dim=-1)
@@ -203,17 +198,32 @@ class MultiHeadAttentionWithCaching(nn.Module):
         # ^ this is a bad idea because it is iterative, a better 
         # approach is to define a new dimension in the tensor
         # this is an idea in physics too, where you can hide a
-        # density function \int p(x) dx in a dimension               
-        
-        queries = queries.view(
-            batch_size, number_of_tokens, self.num_heads, self.d_head
-            ).transpose(1, 2) # shape : (B, T, H, D_head) -> (B, H, T, D_head)
-        keys = keys.view(
-            batch_size, number_of_tokens, self.num_heads, self.d_head
-            ).transpose(1, 2) # shape : (B, T, H, D_head) -> (B, H, T, D_head)
-        values = values.view(
-            batch_size, number_of_tokens, self.num_heads, self.d_head
-            ).transpose(1, 2) # shape : (B, T, H, D_head) -> (B, H, T, D_head)
+        # density function \int p(x) dx in a dimension      
+        keys_new = keys_new.view(batch_size, number_of_tokens, self.num_heads, self.d_head)
+        values_new = values_new.view(batch_size, number_of_tokens, self.num_heads, self.d_head)
+        queries = queries.view(batch_size, number_of_tokens, self.num_heads, self.d_head)
+
+        if use_cache:
+            if self.cache_k is None:
+                self.cache_k = keys_new.detach()
+                self.cache_v = values_new.detach()
+                print("KV-cache is empty.")
+            else:
+                # Sanity check batch size
+                assert self.cache_k.shape[0] == keys_new.shape[0], "Batch size mismatch in cache."
+                self.cache_k = torch.cat([self.cache_k, keys_new.detach()], dim=1)
+                self.cache_v = torch.cat([self.cache_v, values_new.detach()], dim=1)
+                print("KV-cache cat.")
+            keys, values = self.cache_k, self.cache_v
+        else:
+            keys, values = keys_new, values_new
+            print("KV-cache is not used.")
+
+                 
+
+        keys = keys.transpose(1, 2)
+        queries = queries.transpose(1, 2)
+        values = values.transpose(1, 2)
 
         # queries = queries.transpose(1, 2) # shape : 
         # keys = keys.transpose(1, 2) # shape : (B, H, T, D_head)
@@ -248,4 +258,9 @@ class MultiHeadAttentionWithCaching(nn.Module):
         context_vector = context_vector.contiguous().view(batch_size, number_of_tokens, self.d_out) # shape: (B, T, D_out)
         context_vector = self.out_proj(context_vector)
 
+        print(f"Cache K shape: {self.cache_k.shape}")
+
+        
+
         return context_vector
+    

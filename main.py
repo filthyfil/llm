@@ -5,6 +5,7 @@ from model.model import GPTModel
 from utils.generate import generate
 # from utils.gpt_download import download_and_load_gpt2
 # from utils.load_weights import assign, load_weights_into_gpt
+import timeit
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
 
     # Copy the base config (small) and update to specific model settings
     model_name = input(f"Model? (ex: gpt2-small (124M)): ").strip()
+    model_name = "gpt2-small (124M)"
     model_path = model_name.replace(" ", "_") + ".pth"
     print(f"Selected model: {model_name}")
     NEW_CONFIG = GPT_CONFIG_124M.copy()
@@ -36,7 +38,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     print(f"Model configuration: {NEW_CONFIG}")
-    model
+    
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.to(device)
     input_tensor = input_tensor.to(device)
@@ -46,17 +48,47 @@ def main():
     output = generate(
         model=model,
         idx=input_tensor,
-        max_new_tokens=15,
+        max_new_tokens=10,
         context_size=NEW_CONFIG["context_length"],
         top_k=25,
         temperature=1.4,
-        use_cache=False
+        use_cache=True,
     )
 
     decoded = tokenizer.decode(output.squeeze(0).tolist())
     print(decoded)
     print("Generation complete.")
-    print("On gpt2-small (124M) it should read: \"The meaning of life is the end. This is not the end of us — you're never alone\"")
+
+    time_with_cache = timeit.timeit(
+    lambda: generate(
+        model=model,
+        idx=input_tensor,
+        max_new_tokens=100,
+        context_size=NEW_CONFIG["context_length"],
+        top_k=25,
+        temperature=1.4,
+        use_cache=True
+    ),
+    number=5
+    )   
+
+    time_without_cache = timeit.timeit(
+    lambda: generate(
+        model=model,
+        idx=input_tensor,
+        max_new_tokens=100,
+        context_size=NEW_CONFIG["context_length"],
+        top_k=25,
+        temperature=1.4,
+        use_cache=False
+    ),
+    number=5
+    )
+
+    # Report average times
+    print(f"Generation with cache executed in: {time_with_cache / 5:.6f} seconds (average over 5 runs)")
+    print(f"Generation without cache executed in: {time_without_cache / 5:.6f} seconds (average over 5 runs)")
+
     # torch.save(model.state_dict(), "small-gpt2.pth")
 
 

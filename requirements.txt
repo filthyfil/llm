@@ -3,3 +3,4 @@ tiktoken
 tabulate
 tqdm
 tensorflow
+numpy
